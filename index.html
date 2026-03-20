@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Runtime Terror – Trust Score Checker</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #0f0f1a;
+      color: #e0e0e0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    h1 { font-size: 2rem; color: #a78bfa; margin-bottom: 8px; }
+    p.subtitle { color: #888; margin-bottom: 30px; font-size: 0.95rem; }
+    .card {
+      background: #1a1a2e;
+      border: 1px solid #2e2e4e;
+      border-radius: 16px;
+      padding: 32px;
+      width: 100%;
+      max-width: 520px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    }
+    textarea {
+      width: 100%;
+      padding: 14px;
+      border-radius: 10px;
+      border: 1px solid #3a3a5c;
+      background: #0f0f1a;
+      color: #e0e0e0;
+      font-size: 1rem;
+      resize: vertical;
+      min-height: 100px;
+      outline: none;
+    }
+    textarea:focus { border-color: #a78bfa; }
+    button {
+      margin-top: 16px;
+      width: 100%;
+      padding: 14px;
+      background: #7c3aed;
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button:hover { background: #6d28d9; }
+    .result {
+      margin-top: 24px;
+      display: none;
+      text-align: center;
+    }
+    .score-label { font-size: 1rem; color: #aaa; margin-bottom: 6px; }
+    .score-value { font-size: 2.5rem; font-weight: bold; margin-bottom: 12px; }
+    .bar-bg {
+      background: #2e2e4e;
+      border-radius: 999px;
+      height: 12px;
+      overflow: hidden;
+      margin-bottom: 16px;
+    }
+    .bar-fill {
+      height: 100%;
+      border-radius: 999px;
+      transition: width 0.6s ease;
+    }
+    .verdict { font-size: 1.2rem; font-weight: 600; padding: 10px 20px; border-radius: 8px; display: inline-block; }
+    .trust { background: #064e3b; color: #34d399; }
+    .suspicious { background: #451a03; color: #fbbf24; }
+  </style>
+</head>
+<body>
+  <h1>🔍 Trust Score Checker</h1>
+  <p class="subtitle">Powered by Runtime Terror · Naive Bayes ML Model</p>
+  <div class="card">
+    <textarea id="inputText" placeholder="Enter text to check (e.g. 'Click here to win free money!')"></textarea>
+    <button onclick="checkTrust()">Check Trust Score</button>
+    <div class="result" id="result">
+      <div class="score-label">Trust Score</div>
+      <div class="score-value" id="scoreValue"></div>
+      <div class="bar-bg"><div class="bar-fill" id="barFill"></div></div>
+      <div class="verdict" id="verdict"></div>
+    </div>
+  </div>
+
+  <script>
+    // Training data
+    const texts = [
+      "this product is amazing and works perfectly",
+      "very good service and genuine seller",
+      "highly recommended and trustworthy",
+      "great quality and fast delivery",
+      "buy now limited offer",
+      "click this link to win money",
+      "this is fake and scam",
+      "dont trust this seller",
+      "free money offer click now",
+      "suspicious link do not open"
+    ];
+    const labels = [1, 1, 1, 1, 0, 0, 0, 0, 0, 0];
+
+    function tokenize(text) {
+      return text.toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/).filter(Boolean);
+    }
+
+    function buildVocab(texts) {
+      const vocab = {};
+      let idx = 0;
+      texts.forEach(t => tokenize(t).forEach(w => { if (!(w in vocab)) vocab[w] = idx++; }));
+      return vocab;
+    }
+
+    function vectorize(text, vocab) {
+      const vec = new Array(Object.keys(vocab).length).fill(0);
+      tokenize(text).forEach(w => { if (w in vocab) vec[vocab[w]]++; });
+      return vec;
+    }
+
+    function trainNB(texts, labels, vocab) {
+      const classes = [0, 1];
+      const classCounts = {0: 0, 1: 0};
+      const wordCounts = {0: new Array(Object.keys(vocab).length).fill(0), 1: new Array(Object.keys(vocab).length).fill(0)};
+      labels.forEach((l, i) => {
+        classCounts[l]++;
+        const vec = vectorize(texts[i], vocab);
+        vec.forEach((v, j) => wordCounts[l][j] += v);
+      });
+      const logPrior = {0: Math.log(classCounts[0] / labels.length), 1: Math.log(classCounts[1] / labels.length)};
+      const logLikelihood = {};
+      classes.forEach(c => {
+        const total = wordCounts[c].reduce((a, b) => a + b, 0) + Object.keys(vocab).length;
+        logLikelihood[c] = wordCounts[c].map(v => Math.log((v + 1) / total));
+      });
+      return { logPrior, logLikelihood, vocab };
+    }
+
+    function predict(text, model) {
+      const vec = vectorize(text, model.vocab);
+      const scores = {};
+      [0, 1].forEach(c => {
+        scores[c] = model.logPrior[c] + vec.reduce((sum, v, i) => sum + v * model.logLikelihood[c][i], 0);
+      });
+      const maxScore = Math.max(scores[0], scores[1]);
+      const exp0 = Math.exp(scores[0] - maxScore);
+      const exp1 = Math.exp(scores[1] - maxScore);
+      return exp1 / (exp0 + exp1);
+    }
+
+    const vocab = buildVocab(texts);
+    const model = trainNB(texts, labels, vocab);
+
+    function checkTrust() {
+      const text = document.getElementById('inputText').value.trim();
+      if (!text) return;
+      const trustProb = predict(text, model);
+      const score = (trustProb * 100).toFixed(1);
+      const resultDiv = document.getElementById('result');
+      document.getElementById('scoreValue').textContent = score + '%';
+      const bar = document.getElementById('barFill');
+      bar.style.width = score + '%';
+      bar.style.background = trustProb > 0.5 ? '#34d399' : '#fbbf24';
+      const verdict = document.getElementById('verdict');
+      if (trustProb > 0.5) {
+        verdict.textContent = '✅ This seems TRUSTWORTHY';
+        verdict.className = 'verdict trust';
+      } else {
+        verdict.textContent = '⚠️ This seems SUSPICIOUS';
+        verdict.className = 'verdict suspicious';
+      }
+      resultDiv.style.display = 'block';
+    }
+  </script>
+</body>
+</html>
